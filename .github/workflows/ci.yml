@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Синтаксис и кодировка
+    runs-on: windows-latest
+    steps:
+      - name: Клонирование
+        uses: actions/checkout@v4
+
+      - name: Проверка UTF-8 BOM
+        shell: pwsh
+        run: |
+          $path = Join-Path $PWD 'HostsManager.ps1'
+          $bytes = [System.IO.File]::ReadAllBytes($path)
+          $hasBom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+          if (-not $hasBom) {
+            throw 'HostsManager.ps1 должен быть сохранён в UTF-8 с BOM (иначе PowerShell 5.1 испортит кириллицу).'
+          }
+          Write-Host 'BOM на месте.'
+
+      - name: Разбор PowerShell
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'HostsManager.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+
+          if ($errors.Count -gt 0) {
+            foreach ($e in $errors) {
+              Write-Host ("::{0}:{1} {2}" -f $e.Extent.StartLineNumber, $e.Extent.StartColumnNumber, $e.Message)
+            }
+            throw "Найдено ошибок разбора: $($errors.Count)"
+          }
+          Write-Host 'Синтаксис в порядке.'
+
+      - name: Загрузка XAML
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName PresentationFramework
+          $text = [System.IO.File]::ReadAllText((Join-Path $PWD 'HostsManager.ps1'), [System.Text.Encoding]::UTF8)
+          foreach ($name in 'MainXaml', 'DialogXaml') {
+            $pattern = '\$script:' + $name + ' = @''\r?\n(.*?)\r?\n''@'
+            $m = [regex]::Match($text, $pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+            if (-not $m.Success) { throw "Не найден блок $name." }
+            $sr = New-Object System.IO.StringReader($m.Groups[1].Value)
+            $xr = [System.Xml.XmlReader]::Create($sr)
+            $null = [System.Windows.Markup.XamlReader]::Load($xr)
+            Write-Host "$name загружается."
+          }

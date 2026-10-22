@@ -1,0 +1,10 @@
+# Пользовательские данные и резервные копии утилиты
+hosts_profiles/
+*.bak
+
+# Временные файлы и лог ошибок
+*.tmp
+HostsManager.error.log
+
+# Visual Studio
+.vs/
